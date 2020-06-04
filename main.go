@@ -11,8 +11,13 @@ import (
 	"os"
 	"strings"
 
+	xray "contrib.go.opencensus.io/exporter/aws"
 	"github.com/grpc-ecosystem/grpc-gateway/v2/runtime"
 	"github.com/rakyll/statik/fs"
+	"go.opencensus.io/plugin/ocgrpc"
+	"go.opencensus.io/plugin/ochttp"
+	"go.opencensus.io/stats/view"
+	"go.opencensus.io/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/grpclog"
@@ -23,15 +28,6 @@ import (
 
 	// Static files
 	_ "github.com/johanbrandhorst/grpc-gateway-boilerplate/statik"
-
-	// Opencensus imports
-	"go.opencensus.io/plugin/ocgrpc"
-	"go.opencensus.io/plugin/ochttp"
-	"go.opencensus.io/stats/view"
-	"go.opencensus.io/trace"
-
-	// The exporter to extract our metrics and traces (AWS X-Ray)
-	xray "contrib.go.opencensus.io/exporter/aws"
 )
 
 // getOpenAPIHandler serves an OpenAPI UI.
@@ -61,8 +57,10 @@ func main() {
 		log.Fatalln("Failed to listen:", err)
 	}
 
-	if err := view.Register(ocgrpc.DefaultServerViews...); err != nil {
-		log.Fatalf("Failed to register ocgrpc server views: %v", err)
+	allViews := append(ochttp.DefaultServerViews, ocgrpc.DefaultServerViews...)
+	allViews = append(allViews, ocgrpc.DefaultClientViews...)
+	if err := view.Register(allViews...); err != nil {
+		log.Fatalf("Failed to register opencensus views: %v", err)
 	}
 
 	// Register the AWS X-Ray exporter to be able to retrieve
@@ -74,18 +72,17 @@ func main() {
 			log.Info("Publishing trace with ID: ", in.TraceID)
 		}),
 	)
-
 	if err != nil {
 		log.Fatalf("Failed to create the AWS X-Ray exporter: %v", err)
 	}
-	// Do not forget to call Flush() before the application terminates
+	// Do not forget to call Flush() before the application terminates.
 	defer xrayExporter.Flush()
 
-	// Register the trace exporter
+	// Register the trace exporter.
 	trace.RegisterExporter(xrayExporter)
 
-	// Always trace for this demonstration
-	// In production this can be set in the trace.ProbabilitySampler
+	// Always trace for this demonstration.
+	// In production this can be set to a trace.ProbabilitySampler.
 	trace.ApplyConfig(trace.Config{DefaultSampler: trace.AlwaysSample()})
 
 	s := grpc.NewServer(
@@ -133,24 +130,21 @@ func main() {
 		port = "11000"
 	}
 
-	gwHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasPrefix(r.URL.Path, "/api") {
-			gwmux.ServeHTTP(w, r)
-			return
-		}
-		oa.ServeHTTP(w, r)
-	})
-
-	// NOTE(erik): We are wrapping the entire handler here.
-	// This means we are also tracing the getOpenAPIHandler that serves the OpenAPI UI.
+	// Wrap the gateway mux with the OpenCensus HTTP handler
 	openCensusHandler := &ochttp.Handler{
-		Handler: gwHandler, // original gateway handler
+		Handler: gwmux,
 	}
 
 	gatewayAddr := "0.0.0.0:" + port
 	gwServer := &http.Server{
-		Addr:    gatewayAddr,
-		Handler: openCensusHandler,
+		Addr: gatewayAddr,
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if strings.HasPrefix(r.URL.Path, "/api") {
+				openCensusHandler.ServeHTTP(w, r)
+				return
+			}
+			oa.ServeHTTP(w, r)
+		}),
 	}
 	// Empty parameters mean use the TLS Config specified with the server.
 	if strings.ToLower(os.Getenv("SERVE_HTTP")) == "true" {

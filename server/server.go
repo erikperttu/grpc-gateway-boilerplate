@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gofrs/uuid"
 	"go.opencensus.io/trace"
 
-	"github.com/gofrs/uuid"
 	pbExample "github.com/johanbrandhorst/grpc-gateway-boilerplate/proto"
 )
 
