@@ -16,7 +16,6 @@ import (
 	"github.com/rakyll/statik/fs"
 	"go.opencensus.io/plugin/ocgrpc"
 	"go.opencensus.io/plugin/ochttp"
-	"go.opencensus.io/stats/view"
 	"go.opencensus.io/trace"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -55,12 +54,6 @@ func main() {
 	lis, err := net.Listen("tcp", addr)
 	if err != nil {
 		log.Fatalln("Failed to listen:", err)
-	}
-
-	allViews := append(ochttp.DefaultServerViews, ocgrpc.DefaultServerViews...)
-	allViews = append(allViews, ocgrpc.DefaultClientViews...)
-	if err := view.Register(allViews...); err != nil {
-		log.Fatalf("Failed to register opencensus views: %v", err)
 	}
 
 	// Register the AWS X-Ray exporter to be able to retrieve
@@ -117,7 +110,9 @@ func main() {
 		log.Fatalln("Failed to dial server:", err)
 	}
 
-	gwmux := runtime.NewServeMux()
+	gwmux := runtime.NewServeMux(
+		runtime.WithErrorHandler(server.CustomErrorHandler),
+	)
 	err = pbExample.RegisterUserServiceHandler(context.Background(), gwmux, conn)
 	if err != nil {
 		log.Fatalln("Failed to register gateway:", err)
